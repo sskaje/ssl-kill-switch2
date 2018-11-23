@@ -8,6 +8,7 @@
 
 #import <Foundation/Foundation.h>
 #import <Security/SecureTransport.h>
+#import <Security/SecPolicy.h>
 
 #if SUBSTRATE_BUILD
 #import "substrate.h"
@@ -17,7 +18,7 @@
 
 #else
 
-#import "fishhook.h"
+#import "fishhook/fishhook.h"
 #import <dlfcn.h>
 
 #endif
@@ -151,6 +152,23 @@ static void newRegisterOrigin(id self, SEL _cmd, NSString *origin)
 #endif
 
 
+static bool (*original_SecIsInternalRelease)(void);
+
+static bool replace_SecIsInternalRelease(void) {
+    // SSKLog(@"replace_SecIsInternalRelease: void");
+    static bool isInternal = true;
+    return isInternal;
+}
+
+static bool (*original_requireUATPinning)(CFStringRef service);
+
+static bool replace_requireUATPinning(CFStringRef service) {
+    // SSKLog(@"replace_requireUATPinning: %@", (__bridge NSString *) service);
+    static bool requirePinning = false;
+    return requirePinning;
+}
+
+
 
 #pragma mark Dylib Constructor
 
@@ -188,6 +206,15 @@ __attribute__((constructor)) static void init(int argc, const char **argv)
             MSHookFunction((void *) tls_helper_create_peer_trust, (void *) replaced_tls_helper_create_peer_trust,  (void **) &original_tls_helper_create_peer_trust);
         }
         
+        void *SecIsInternalRelease = dlsym(RTLD_DEFAULT, "SecIsInternalRelease");
+        if (SecIsInternalRelease) {
+            MSHookFunction((void *) SecIsInternalRelease, (void *) replace_SecIsInternalRelease,  (void **) &original_SecIsInternalRelease);
+        }
+
+        void *requireUATPinning = dlsym(RTLD_DEFAULT, "requireUATPinning");
+        if (requireUATPinning) {
+            MSHookFunction((void *) requireUATPinning,(void *)  replace_requireUATPinning, (void **) &original_requireUATPinning);
+        }
         
         // CocoaSPDY hooks - https://github.com/twitter/CocoaSPDY
         // TODO: Enable these hooks for the fishhook-based hooking so it works on OS X too
@@ -235,6 +262,19 @@ __attribute__((constructor)) static void init(int argc, const char **argv)
     {
         SSKLog(@"Hooking failed.");
     }
+
+    original_SecIsInternalRelease = dlsym(RTLD_DEFAULT, "SecIsInternalRelease");
+    if ((rebind_symbols((struct rebinding[1]){{(char *)"SecIsInternalRelease", (void *)replace_SecIsInternalRelease}}, 1) < 0))
+    {
+        SSKLog(@"Hooking failed.");
+    }
+
+    original_requireUATPinning = dlsym(RTLD_DEFAULT, "requireUATPinning");
+    if ((rebind_symbols((struct rebinding[1]){{(char *)"requireUATPinning", (void *)replace_requireUATPinning}}, 1) < 0))
+    {
+        SSKLog(@"Hooking failed.");
+    }
+
 #endif
 }
 
